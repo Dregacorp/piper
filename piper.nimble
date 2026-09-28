@@ -6,7 +6,6 @@ description   = "Pipe and compose for Nim: :> applies a value to a function, >>>
 license       = "BSD-3-Clause"
 srcDir        = "src"
 installExt    = @["nim"]
-homepage      = "https://github.com/Dregacorp/piper"
 
 # Dependencies
 

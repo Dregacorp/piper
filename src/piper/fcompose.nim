@@ -1,42 +1,74 @@
-## The `>>>` left-to-right function composition operator.
+## Left-to-right function composition for Nim.
 ##
-## `>>>` builds a **new function**. It does **not** run anything.
-## You call the result later, once or many times.
+## `>>>` composes two unary functions into a new unary function.
+##
+## Example:
 ##
 ## .. code-block:: nim
-##   let pipeline = double >>> addOne >>> square
-##   echo pipeline(3)   # runs double, then addOne, then square
-##   echo pipeline(5)   # runs them again with 5
+##   import piper
+##
+##   proc double(x: int): int =
+##     x * 2
+##
+##   proc addOne(x: int): int =
+##     x + 1
+##
+##   proc square(x: int): int =
+##     x * x
+##
+##   let pipeline =
+##     double >>> addOne >>> square
+##
+##   echo pipeline(5)
+##   # 121
+##
+## `>>>` returns a closure because the composed function captures
+## the two functions being composed.
 
 {.push warning[GcUnsafe]: off.}
 
 type
   Fn*[A, B] = proc(a: A): B {.closure.}
-    ## A closure function from `A` to `B`.
+    ## A first-class closure from `A` to `B`.
     ##
-    ## Exported so users can name the type of a composed pipeline:
-    ##
-    ## .. code-block:: nim
-    ##   let p: Fn[int, string] = double >>> toStr
+    ## `Fn[A, B]` is the public type used for reusable pipelines.
+
 
 proc `>>>`*[A, B, C](
-    f: proc(a: A): B {.closure.},
-    g: proc(b: B): C {.closure.}
-  ): proc(a: A): C {.closure.} =
-  ## Compose `f` and `g` into a single function.
+    f: Fn[A, B],
+    g: Fn[B, C]
+  ): Fn[A, C] {.inline.} =
+  ## Compose `f` and `g` left-to-right.
   ##
-  ## Runs `f` first, then `g`. Returns the result of `g`.
+  ## Given:
   ##
-  ## Nothing runs when you write `f >>> g`. The result is a new
-  ## function that you call later.
+  ##   f : A -> B
+  ##   g : B -> C
+  ##
+  ## the result is:
+  ##
+  ##   A -> C
+  ##
+  ## Evaluation order is:
+  ##
+  ##   x -> f(x) -> g(result)
+  ##
+  ## The composition is lazy with respect to execution:
+  ## neither function is called while constructing the pipeline.
+  ##
+  ## Example:
   ##
   ## .. code-block:: nim
-  ##   let p = double >>> addOne
-  ##   echo p(5)      # 11
-  ##   echo p(100)    # 201
+  ##   let pipeline = double >>> addOne
   ##
-  ## Composition is associative: `(f >>> g) >>> h` and
-  ## `f >>> (g >>> h)` behave the same way.
-  result = proc(a: A): C = g(f(a))
+  ##   # Nothing has run here.
+  ##
+  ##   let value = pipeline(5)
+  ##   # double(5) runs first.
+  ##   # addOne(10) runs second.
+  ##
+  result = proc(a: A): C =
+    g(f(a))
+
 
 {.pop.}

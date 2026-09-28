@@ -1,31 +1,18 @@
 ## piper — function composition and piping for Nim.
 ##
-## Two operators:
+## Public operators:
 ##
-## - `:>` — pipe a value through a function. Runs immediately.
-##   Binds loosely (OP2), so it can mix with `>>>` without parentheses.
-## - `>>>` — compose two functions into a new one. Runs nothing until
-##   the composed function is called. Binds at OP5.
+## - `:>`  — immediately applies a value to a unary function.
+## - `>>>` — composes two unary functions into a new function.
 ##
-## Plus the `Fn[A, B]` type for naming composed functions.
+## Public type:
 ##
-## .. code-block:: nim
-##   import piper
+## - `Fn[A, B]` — first-class unary closure type.
 ##
-##   proc double(x: int): int = x * 2
-##   proc addOne(x: int): int = x + 1
-##   proc square(x: int): int = x * x
+## Public optimization:
 ##
-##   # Pipe a value through functions:
-##   echo 5 :> double :> addOne :> square             # 121
-##
-##   # Build a reusable composed function:
-##   let mathify = double >>> addOne >>> square
-##   echo mathify(5)                                  # 121
-##
-##   # Mix pipe and composition (no parens needed):
-##   echo 5 :> double >>> addOne >>> square           # 121
-##   echo 3 :> double >>> addOne :> square            # 49
+## - `flatCompose` — compile-time flat composition that avoids
+##   nested composition closures.
 
 import ./piper/pipe
 import ./piper/fcompose

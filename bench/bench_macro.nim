@@ -1,4 +1,11 @@
-import std/[algorithm, macros, monotimes, times, volatile]
+import std/[
+  algorithm,
+  macros,
+  monotimes,
+  times,
+  volatile
+]
+
 import piper
 
 const
@@ -7,140 +14,6 @@ const
   InputCount = 1024
 
 var blackHole {.global.}: int
-
-# ============================================================
-# Experimental compile-time flat composer
-#
-# This is NOT part of piper yet.
-#
-# It accepts:
-#
-#   flatCompose(f, g, h)
-#
-# and generates exactly one closure:
-#
-#   proc(value) =
-#     h(g(f(value)))
-#
-# The current >>> implementation instead creates nested
-# composition closures.
-# ============================================================
-
-macro flatCompose(args: varargs[typed]): untyped =
-  if args.len < 2:
-    error(
-      "flatCompose requires at least two functions",
-      if args.len > 0:
-        args[0]
-      else:
-        nil
-    )
-
-  # Our Nim 2.2.12 probe showed that:
-  #
-  #   getType(fn).repr
-  #
-  # is:
-  #
-  #   proc[int, int]
-  #
-  # and its AST is:
-  #
-  #   BracketExpr
-  #     Sym "proc"
-  #     Sym "int"
-  #     Sym "int"
-  #
-  # Therefore we validate the AST shape directly instead of using
-  # typeKind here.
-
-  for index, arg in args:
-    let argType = arg.getType
-
-    if argType.kind != nnkBracketExpr:
-      error(
-        "flatCompose argument " &
-        $index &
-        " does not have the expected proc type representation",
-        arg
-      )
-
-    if argType.len < 3:
-      error(
-        "flatCompose argument " &
-        $index &
-        " has an invalid proc type representation",
-        arg
-      )
-
-    if argType[0].kind != nnkSym:
-      error(
-        "flatCompose argument " &
-        $index &
-        " does not contain the expected proc type marker",
-        arg
-      )
-
-    if argType[0].repr != "proc":
-      error(
-        "flatCompose argument " &
-        $index &
-        " is not a proc type",
-        arg
-      )
-
-  let firstType =
-    args[0].getType
-
-  let lastType =
-    args[^1].getType
-
-  let inputType =
-    firstType[1]
-
-  let outputType =
-    lastType[^1]
-
-  # Generate a hygienic parameter.
-  let input =
-    genSym(
-      nskParam,
-      "value"
-    )
-
-  # Start with:
-  #
-  #   f(value)
-  #
-  var body =
-    newCall(
-      args[0],
-      input
-    )
-
-  # Build:
-  #
-  #   g(f(value))
-  #   h(g(f(value)))
-  #   ...
-  #
-  # without introducing intermediate composition closures.
-  for index in 1 ..< args.len:
-    body =
-      newCall(
-        args[index],
-        body
-      )
-
-  # Generate exactly one closure.
-  result =
-    quote do:
-      (
-        proc(
-          `input`: `inputType`
-        ): `outputType` =
-          `body`
-      )
 
 # ============================================================
 # Test functions
@@ -206,22 +79,19 @@ let current4 =
   negateClosure
 
 # ============================================================
-# Macro-generated flat pipelines
+# Production flatCompose implementation
 #
-# Explicitly type them as Fn values.
-#
-# This also gives us a compile-time compatibility check:
-# the generated closure must remain assignable to Fn[A, B].
+# This is the public macro from piper/fcompose.nim.
 # ============================================================
 
-let macro2: Fn[int, int] =
+let flat2: Fn[int, int] =
   flatCompose(
     doubleClosure,
     addOneClosure
   )
 
 
-let macro3: Fn[int, int] =
+let flat3: Fn[int, int] =
   flatCompose(
     doubleClosure,
     addOneClosure,
@@ -229,7 +99,7 @@ let macro3: Fn[int, int] =
   )
 
 
-let macro4: Fn[int, int] =
+let flat4: Fn[int, int] =
   flatCompose(
     doubleClosure,
     addOneClosure,
@@ -244,11 +114,14 @@ let macro4: Fn[int, int] =
 proc benchDirectClosure2(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       addOneClosure(
@@ -261,11 +134,14 @@ proc benchDirectClosure2(
 proc benchDirectClosure3(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       squareClosure(
@@ -280,11 +156,14 @@ proc benchDirectClosure3(
 proc benchDirectClosure4(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       negateClosure(
@@ -304,11 +183,14 @@ proc benchDirectClosure4(
 proc benchCurrent2(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       current2(x)
@@ -319,11 +201,14 @@ proc benchCurrent2(
 proc benchCurrent3(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       current3(x)
@@ -334,11 +219,14 @@ proc benchCurrent3(
 proc benchCurrent4(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
       current4(x)
@@ -346,67 +234,79 @@ proc benchCurrent4(
   total
 
 # ============================================================
-# Macro-generated flat benchmarks
+# flatCompose benchmarks
 # ============================================================
 
-proc benchMacro2(
+proc benchFlat2(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
-      macro2(x)
+      flat2(x)
 
   total
 
 
-proc benchMacro3(
+proc benchFlat3(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
-      macro3(x)
+      flat3(x)
 
   total
 
 
-proc benchMacro4(
+proc benchFlat4(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     total +=
-      macro4(x)
+      flat4(x)
 
   total
 
 # ============================================================
-# Rebuilding each iteration
+# Rebuilding current >>> each iteration
 # ============================================================
 
 proc benchBuildCurrent3(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
-    let pipeline =
+    let pipeline: Fn[int, int] =
       doubleClosure >>>
       addOneClosure >>>
       squareClosure
@@ -416,15 +316,21 @@ proc benchBuildCurrent3(
 
   total
 
+# ============================================================
+# Rebuilding flatCompose each iteration
+# ============================================================
 
-proc benchBuildMacro3(
+proc benchBuildFlat3(
     inputs: openArray[int]
   ): int {.noinline.} =
+
   var total = 0
 
   for i in 0 ..< Iterations:
     let x =
-      inputs[i and (InputCount - 1)]
+      inputs[
+        i and (InputCount - 1)
+      ]
 
     let pipeline: Fn[int, int] =
       flatCompose(
@@ -447,9 +353,12 @@ template runBenchmark(
     benchmark: untyped,
     inputs: untyped
   ) =
+
+  # Warm-up.
   discard benchmark(inputs)
 
-  var samples: array[Repeats, int64]
+  var samples:
+    array[Repeats, int64]
 
   for runIndex in 0 ..< Repeats:
     let start =
@@ -472,13 +381,16 @@ template runBenchmark(
   samples.sort()
 
   let medianNs =
-    samples[Repeats div 2]
+    samples[
+      Repeats div 2
+    ]
 
   let nsPerOperation =
     medianNs.float /
     Iterations.float
 
   echo name
+
   echo "  median: ",
     medianNs,
     " ns"
@@ -549,6 +461,27 @@ proc main() =
       )
     )
 
+  if expected2 != 15:
+    raise newException(
+      AssertionDefect,
+      "unexpected 2-stage baseline result: " &
+      $expected2
+    )
+
+  if expected3 != 225:
+    raise newException(
+      AssertionDefect,
+      "unexpected 3-stage baseline result: " &
+      $expected3
+    )
+
+  if expected4 != -225:
+    raise newException(
+      AssertionDefect,
+      "unexpected 4-stage baseline result: " &
+      $expected4
+    )
+
   if current2(TestValue) != expected2:
     raise newException(
       AssertionDefect,
@@ -567,29 +500,29 @@ proc main() =
       "current >>> 4-stage result is incorrect"
     )
 
-  if macro2(TestValue) != expected2:
+  if flat2(TestValue) != expected2:
     raise newException(
       AssertionDefect,
-      "macro 2-stage result is incorrect"
+      "flatCompose 2-stage result is incorrect"
     )
 
-  if macro3(TestValue) != expected3:
+  if flat3(TestValue) != expected3:
     raise newException(
       AssertionDefect,
-      "macro 3-stage result is incorrect"
+      "flatCompose 3-stage result is incorrect"
     )
 
-  if macro4(TestValue) != expected4:
+  if flat4(TestValue) != expected4:
     raise newException(
       AssertionDefect,
-      "macro 4-stage result is incorrect"
+      "flatCompose 4-stage result is incorrect"
     )
 
   # ----------------------------------------------------------
   # Header
   # ----------------------------------------------------------
 
-  echo "piper macro-composition experiment"
+  echo "piper flat-composition benchmark"
   echo "iterations: ",
     Iterations
 
@@ -621,7 +554,7 @@ proc main() =
   )
 
   # ----------------------------------------------------------
-  # Existing >>> implementation
+  # Current >>>
   # ----------------------------------------------------------
 
   runBenchmark(
@@ -643,24 +576,24 @@ proc main() =
   )
 
   # ----------------------------------------------------------
-  # Macro-generated flat implementation
+  # flatCompose
   # ----------------------------------------------------------
 
   runBenchmark(
-    "7. macro flat 2-stage",
-    benchMacro2,
+    "7. flatCompose 2-stage",
+    benchFlat2,
     inputs
   )
 
   runBenchmark(
-    "8. macro flat 3-stage",
-    benchMacro3,
+    "8. flatCompose 3-stage",
+    benchFlat3,
     inputs
   )
 
   runBenchmark(
-    "9. macro flat 4-stage",
-    benchMacro4,
+    "9. flatCompose 4-stage",
+    benchFlat4,
     inputs
   )
 
@@ -675,8 +608,8 @@ proc main() =
   )
 
   runBenchmark(
-    "11. rebuild macro flat 3-stage",
-    benchBuildMacro3,
+    "11. rebuild flatCompose 3-stage",
+    benchBuildFlat3,
     inputs
   )
 

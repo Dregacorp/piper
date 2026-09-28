@@ -2,17 +2,24 @@
 examples/demo
 examples/mixing
 examples/compose_and_apply
+
 tests/test1
 tests/test_fcompose
 tests/test_pipe
 tests/test_mixing
+
 src/piper/fcompose
 src/piper/pipe
 src/piper.out
+
+bench/bench_piper
+bench/bench_specialized
+bench/bench_piper.exe
+bench/bench_specialized.exe
 
 # Nim cache
 nimcache/
 *.nimcache/
 
 # Nimble
-*.nimble.linkexamples/myTest
+*.nimble.link

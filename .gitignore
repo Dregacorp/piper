@@ -1,0 +1,18 @@
+# Compiled binaries
+examples/demo
+examples/mixing
+examples/compose_and_apply
+tests/test1
+tests/test_fcompose
+tests/test_pipe
+tests/test_mixing
+src/piper/fcompose
+src/piper/pipe
+src/piper.out
+
+# Nim cache
+nimcache/
+*.nimcache/
+
+# Nimble
+*.nimble.linkexamples/myTest

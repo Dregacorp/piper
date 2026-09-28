@@ -1,4 +1,4 @@
-## Left-to-right function composition for Nim.
+## The `>>>` left-to-right function composition operator.
 ##
 ## `>>>` composes two unary functions into a new unary function.
 ##
@@ -22,8 +22,8 @@
 ##   echo pipeline(5)
 ##   # 121
 ##
-## `>>>` returns a closure because the composed function captures
-## the two functions being composed.
+## The returned function is a closure because it captures the
+## functions being composed.
 
 {.push warning[GcUnsafe]: off.}
 
@@ -33,11 +33,10 @@ type
     ##
     ## `Fn[A, B]` is the public type used for reusable pipelines.
 
-
 proc `>>>`*[A, B, C](
-    f: Fn[A, B],
-    g: Fn[B, C]
-  ): Fn[A, C] {.inline.} =
+    f: proc(a: A): B {.closure.},
+    g: proc(b: B): C {.closure.}
+  ): proc(a: A): C {.closure.} {.inline.} =
   ## Compose `f` and `g` left-to-right.
   ##
   ## Given:
@@ -53,8 +52,12 @@ proc `>>>`*[A, B, C](
   ##
   ##   x -> f(x) -> g(result)
   ##
-  ## The composition is lazy with respect to execution:
-  ## neither function is called while constructing the pipeline.
+  ## Neither function is called while constructing the pipeline.
+  ##
+  ## The constructor is inlineable so the compiler can eliminate
+  ## the overhead of calling the `>>>` constructor itself.
+  ##
+  ## The resulting function remains a closure.
   ##
   ## Example:
   ##
@@ -66,9 +69,8 @@ proc `>>>`*[A, B, C](
   ##   let value = pipeline(5)
   ##   # double(5) runs first.
   ##   # addOne(10) runs second.
-  ##
+
   result = proc(a: A): C =
     g(f(a))
-
 
 {.pop.}

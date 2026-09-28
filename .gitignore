@@ -8,14 +8,13 @@ tests/test_fcompose
 tests/test_pipe
 tests/test_mixing
 
+bench/bench_piper
+bench/bench_specialized
+bench/macro_probe
+
 src/piper/fcompose
 src/piper/pipe
 src/piper.out
-
-bench/bench_piper
-bench/bench_specialized
-bench/bench_piper.exe
-bench/bench_specialized.exe
 
 # Nim cache
 nimcache/

@@ -19,8 +19,9 @@ proc square(x: int): int = x * x
 echo 5 :> double >>> addOne >>> square     # 121
 ```
 
-That's the whole library: **`:>` pipes a value, `>>>` composes
-functions, and the two mix naturally.**
+That's the core of the library: **`:>` pipes a value, `>>>` composes
+functions, and the two mix naturally.** `Fn[A, B]` and `toFn` provide an
+explicit first-class closure representation when you need one.
 
 ---
 
@@ -34,6 +35,7 @@ functions, and the two mix naturally.**
   * [`:>` — pipe a value](#-pipe-a-value)
   * [`>>>` — compose functions](#-compose-functions)
   * [`Fn[A, B]` — the function type](#fna-b--the-function-type)
+  * [`toFn` — convert to a first-class function](#tofn--convert-to-a-first-class-function)
 * [Mixing pipes and composition](#mixing-pipes-and-composition)
 * [Real-world examples](#real-world-examples)
 * [Comparison with other languages](#comparison-with-other-languages)
@@ -195,18 +197,26 @@ echo 5 :> double >>> addOne >>> square     # 121
 
 ## API reference
 
-`piper` exports exactly three things. Everything else is
-implementation detail.
+`piper` exposes four public API symbols:
+
+```text
+:>
+>>>
+Fn[A, B]
+toFn
+```
+
+Everything else is implementation detail.
 
 ### `:>` — pipe a value
 
 ```nim
-template `:>`*(value: untyped, fn: untyped): untyped
+macro `:>`*(value: typed, stage: untyped): untyped
 ```
 
-Takes a **value** on the left and a **function** on the right. Calls
-the function immediately with the value as its argument. Returns
-whatever the function returns.
+Takes a **value** on the left and a **callable expression** on the
+right. The macro lowers the expression directly to function
+application.
 
 ```nim
 5 :> double              # 10    →  double(5)
@@ -220,8 +230,8 @@ parentheses. It also chains naturally with itself:
 5 :> double :> addOne    # 11    →  addOne(double(5))
 ```
 
-**Runs immediately.** There is no deferred evaluation. Every `:>`
-executes its function right away.
+**Runs immediately.** There is no deferred pipeline object. The
+generated expression calls the function during normal evaluation.
 
 **Chains left-to-right.** Each stage's output becomes the next
 stage's input. Types can change at each step:
@@ -240,27 +250,26 @@ make() :> double           # function call
 (3 + 4) :> double          # arithmetic
 ```
 
-**Right side can be any callable:**
+**Right side can be any callable expression accepted by Nim:**
 
 ```nim
 5 :> double                # named proc
 5 :> (proc(x: int): int = x + 100)   # lambda
+
 let n = 100
 let addN = proc(x: int): int = x + n
+
 5 :> addN                  # closure that captures `n`
 ```
 
 ### `>>>` — compose functions
 
 ```nim
-proc `>>>`*[A, B, C](
-    f: proc(a: A): B {.closure.},
-    g: proc(b: B): C {.closure.}
-  ): proc(a: A): C {.closure.}
+macro `>>>`*(lhs: untyped, rhs: untyped): untyped
 ```
 
-Takes two **functions** and returns a **new function**. Does **not**
-run anything.
+Takes two **function expressions** and generates a new callable.
+Does **not** run anything when the composition is created.
 
 ```nim
 let p = double >>> addOne
@@ -269,13 +278,25 @@ echo p(10)                 # 21
 ```
 
 **Binds tighter (OP5)** than `:>`. This is what makes
-`5 :> f >>> g` parse as `5 :> (f >>> g)`.
+
+```nim
+5 :> f >>> g
+```
+
+parse as:
+
+```nim
+5 :> (f >>> g)
+```
 
 **Does nothing at build time.** The expression `f >>> g` is a
-function value. It runs nothing until called. You can verify this:
+function value. It runs only when the resulting callable is invoked.
+
+You can verify this:
 
 ```nim
 var counter = 0
+
 proc tracked(x: int): int =
   inc counter
   x * 2
@@ -284,40 +305,79 @@ let p = tracked >>> tracked      # counter == 0
 discard p(5)                     # counter == 2
 ```
 
-**Associative.** `(f >>> g) >>> h` and `f >>> (g >>> h)` produce the
-same function.
+**Associative.** `(f >>> g) >>> h` and `f >>> (g >>> h)` represent the
+same left-to-right function composition.
 
-**Result is first-class.** You can store it, pass it, return it,
-put it in a collection, compose it further:
+**First-class when needed.** A direct `>>>` pipeline can remain an
+ordinary `nimcall` procedure when all stages are ordinary direct
+procedures. When you need the stable first-class `Fn[A, B]` closure
+type, use `toFn`.
 
 ```nim
-# Store in a variable
-let mathify = double >>> addOne >>> square
+let mathify =
+  double >>>
+  addOne >>>
+  square
+
+let firstClass: Fn[int, int] =
+  toFn(mathify)
+
+echo firstClass(5)            # 121
+```
+
+You can then store the `Fn` value, pass it to another function, return
+it, put it in a collection, or compose it further:
+
+```nim
+let mathify =
+  toFn(
+    double >>>
+    addOne >>>
+    square
+  )
 
 # Store in a sequence
-let pipelines: seq[Fn[int, int]] = @[
-  double >>> addOne,
-  double >>> square,
-]
+let pipelines: seq[Fn[int, int]] =
+  @[
+    toFn(double >>> addOne),
+    toFn(double >>> square),
+  ]
 
 # Pass to a function
-proc applyToAll(xs: seq[int], f: Fn[int, int]): seq[int] =
+proc applyToAll(
+    xs: seq[int],
+    f: Fn[int, int]
+  ): seq[int] =
   for x in xs:
     result.add(f(x))
 
-echo applyToAll(@[1, 2, 3], mathify)         # @[9, 25, 49]
+echo applyToAll(@[1, 2, 3], mathify)
+# @[9, 25, 49]
 
 # Return from a function
 proc makeScaler(factor: int): Fn[int, int] =
-  result = proc(x: int): int = x * factor
+  result =
+    proc(x: int): int =
+      x * factor
 
-let triple = makeScaler(3)
-echo 5 :> triple                             # 15
+let triple =
+  makeScaler(3)
+
+echo 5 :> triple             # 15
 
 # Compose further
-let base = double >>> addOne
-let extended = base >>> square >>> toStr
-echo extended(3)                             # "49"
+let base =
+  toFn(
+    double >>>
+    addOne
+  )
+
+let extended =
+  base >>>
+  square >>>
+  toStr
+
+echo extended(3)             # "49"
 ```
 
 ### `Fn[A, B]` — the function type
@@ -326,18 +386,100 @@ echo extended(3)                             # "49"
 type Fn*[A, B] = proc(a: A): B {.closure.}
 ```
 
-A type alias for "a closure function from `A` to `B`." It's the type
-of any composed pipeline.
+`Fn[A, B]` is a first-class closure type representing a unary function
+from `A` to `B`.
+
+A composed pipeline made entirely from ordinary direct procedures may
+be generated as a `nimcall` procedure rather than a closure. `toFn`
+provides the explicit conversion when a `Fn[A, B]` value is required.
 
 ```nim
-let mathify: Fn[int, int] = double >>> addOne >>> square
-let stringify: Fn[int, string] = double >>> addOne >>> toStr
-let slugify: Fn[string, string] = trim >>> lower >>> split >>> join
+let mathify: Fn[int, int] =
+  toFn(
+    double >>>
+    addOne >>>
+    square
+  )
+
+let stringify: Fn[int, string] =
+  toFn(
+    double >>>
+    addOne >>>
+    toStr
+  )
+
+let slugify: Fn[string, string] =
+  toFn(
+    trim >>>
+    lower >>>
+    split >>>
+    join
+  )
 ```
 
-`Fn[A, B]` is exactly equivalent to `proc(a: A): B {.closure.}`. The
-alias exists to give a short name to the type that `>>>` produces and
-`:>` consumes.
+The `Fn` type is equivalent to:
+
+```nim
+proc(a: A): B {.closure.}
+```
+
+Use `Fn[A, B]` when an explicit first-class closure type makes the
+interface clearer.
+
+### `toFn` — convert to a first-class function
+
+`toFn` converts an ordinary `nimcall` procedure or generated
+non-closure pipeline into the first-class `Fn[A, B]` closure type.
+
+The public overloads are:
+
+```nim
+proc toFn*[A, B](
+    value: proc(a: A): B {.nimcall.}
+  ): Fn[A, B] {.inline.}
+
+proc toFn*[A, B](
+    value: Fn[A, B]
+  ): Fn[A, B] {.inline.}
+```
+
+For a direct procedure:
+
+```nim
+let doubleFn: Fn[int, int] =
+  toFn(double)
+
+echo doubleFn(5)              # 10
+```
+
+For a composed pipeline:
+
+```nim
+let mathify: Fn[int, int] =
+  toFn(
+    double >>>
+    addOne >>>
+    square
+  )
+
+echo mathify(5)               # 121
+```
+
+An existing `Fn` value is not unnecessarily wrapped again:
+
+```nim
+let original: Fn[int, int] =
+  proc(x: int): int =
+    x + 5
+
+let converted =
+  toFn(original)
+
+echo converted(10)            # 15
+```
+
+`toFn` is the explicit boundary between the library's efficient
+direct-call representation and its first-class closure representation.
 
 ---
 
@@ -360,8 +502,8 @@ groups as:
 5 :> (double >>> addOne >>> square)
 ```
 
-`>>>` grabs its whole right side and produces a single function.
-Then `:>` applies `5` to that function.
+`>>>` grabs its whole right side and produces a single callable.
+Then `:>` applies `5` to that callable.
 
 ### A full example
 
@@ -381,10 +523,14 @@ echo 3 :> double >>> addOne :> square           # 49
 # 3 → ((3*2)+1) = 7 → square(7) = 49
 
 # Pipe, compose, pipe, compose:
-echo 3 :> double >>> addOne :> square >>> negate    # -49
+echo 3 :> double >>> addOne :> square >>> negate # -49
 
 # Bound composition, applied twice:
-let mathify = double >>> addOne >>> square
+let mathify =
+  double >>>
+  addOne >>>
+  square
+
 echo 5 :> mathify                                # 121
 echo 5 :> mathify :> mathify                     # 59049
 ```
@@ -411,7 +557,10 @@ proc trim(s: string): string = s.strip
 proc lower(s: string): string = s.toLowerAscii
 proc collapse(s: string): string = s.splitWhitespace.join(" ")
 
-let normalize = trim >>> lower >>> collapse
+let normalize =
+  trim >>>
+  lower >>>
+  collapse
 
 echo "  Hello   World  " :> normalize
 # "hello world"
@@ -427,10 +576,18 @@ import std/strutils
 import piper
 
 proc double(x: int): int = x * 2
-proc addPrefix(prefix: string): proc(s: string): string =
-  result = proc(s: string): string = prefix & s
 
-let format = double >>> intToStr >>> addPrefix("$")
+proc addPrefix(
+    prefix: string
+  ): proc(s: string): string =
+  result =
+    proc(s: string): string =
+      prefix & s
+
+let format =
+  double >>>
+  intToStr >>>
+  addPrefix("$")
 
 echo 42 :> format                            # "$84"
 ```
@@ -450,17 +607,21 @@ proc notEmpty(s: string): string =
   s
 
 proc maxLen(n: int): proc(s: string): string =
-  result = proc(s: string): string =
-    if s.len > n:
-      raise newException(ValueError, "too long")
-    s
+  result =
+    proc(s: string): string =
+      if s.len > n:
+        raise newException(ValueError, "too long")
+      s
 
 proc isNumeric(s: string): string =
   if not s.allCharsInSet({'0'..'9'}):
     raise newException(ValueError, "not numeric")
   s
 
-let validate = notEmpty >>> maxLen(10) >>> isNumeric
+let validate =
+  notEmpty >>>
+  maxLen(10) >>>
+  isNumeric
 
 try:
   echo "12345" :> validate                   # "12345"
@@ -481,10 +642,14 @@ proc double(x: int): int = x * 2
 proc addOne(x: int): int = x + 1
 proc square(x: int): int = x * x
 
-let mathify = double >>> addOne >>> square
+let mathify =
+  double >>>
+  addOne >>>
+  square
 
 let inputs = @[1, 2, 3, 4, 5]
 var results: seq[int] = @[]
+
 for x in inputs:
   results.add(x :> mathify)
 
@@ -501,12 +666,20 @@ proc double(x: int): int = x * 2
 proc square(x: int): int = x * x
 proc addOne(x: int): int = x + 1
 
-proc applyTwice(x: int, f: Fn[int, int]): int =
+proc applyTwice(
+    x: int,
+    f: Fn[int, int]
+  ): int =
   f(f(x))
 
-echo applyTwice(3, double)             # 12   (3*2*2)
-echo applyTwice(3, square)             # 81   (3^2^2 = 3^4)
-echo applyTwice(3, double >>> addOne)  # 14   ((3*2)+1, then *2+1)
+echo applyTwice(3, toFn(double))             # 12   (3*2*2)
+echo applyTwice(3, toFn(square))             # 81   (3^2^2 = 3^4)
+echo applyTwice(
+  3,
+  toFn(double >>> addOne)
+)                                             # 15
+# First: 3 → 7
+# Second: 7 → 15
 ```
 
 ### Example 6: chaining across types
@@ -550,8 +723,8 @@ echo 5 :> d                                   # 50
 echo 5 :> e                                   # -11
 ```
 
-Each pipeline is a value. You can compare them, store them, choose
-between them at runtime.
+Each pipeline is a value. You can store them, select between them,
+dispatch on them at runtime, and compose them further.
 
 ### Example 8: runtime pipeline selection
 
@@ -561,11 +734,12 @@ import piper
 proc double(x: int): int = x * 2
 proc addOne(x: int): int = x + 1
 
-let pipelines: seq[Fn[int, int]] = @[
-  double >>> addOne,
-  addOne >>> double,
-  double >>> double,
-]
+let pipelines: seq[Fn[int, int]] =
+  @[
+    toFn(double >>> addOne),
+    toFn(addOne >>> double),
+    toFn(double >>> double),
+  ]
 
 for i, p in pipelines:
   echo "pipeline ", i, " on 5: ", (5 :> p)
@@ -581,7 +755,7 @@ for i, p in pipelines:
 
 ### Elixir
 
-Elixir's `|>` is pure application, no composition:
+Elixir's `|>` is application, not function composition:
 
 ```elixir
 result = 5 |> double() |> addOne() |> square()
@@ -597,46 +771,69 @@ mathify.(5)
 In `piper`, `>>>` gives you the reusable pipeline directly:
 
 ```nim
-let mathify = double >>> addOne >>> square
+let mathify =
+  double >>>
+  addOne >>>
+  square
+
 echo 5 :> mathify
 ```
 
 ### F#
 
-F# has both `|>` (application) and `>>` (composition):
+F# has both `|>` for application and `>>` for left-to-right function
+composition:
 
 ```fsharp
 let mathify = double >> addOne >> square
 let result = 5 |> mathify
 ```
 
-But F# keeps them at different precedences so you can't mix
-`5 |> double >> addOne` in one line without parens. `piper` uses
-`:>` and `>>>` so that mixing works.
+The operators represent different operations. `piper` uses `:>` and
+`>>>` with deliberately chosen precedence so value application and
+function composition can appear in the same expression without
+parentheses.
 
 ### Haskell
 
 Haskell's `.` is composition (right-to-left) and `>>>` is
 left-to-right composition from `Control.Category`. Application is
-`$` or just juxtaposition:
+`$` or ordinary function application:
 
 ```haskell
 mathify = double >>> addOne >>> square
 result = mathify 5
 ```
 
-`piper`'s `>>>` matches Haskell's, but `:>` plays the role of `$`
-(both apply a value), and `>>>` binds tighter than `:>` so they mix.
+`piper`'s `>>>` matches Haskell's left-to-right composition, but `:>`
+is a left-to-right value-application operator rather than Haskell's
+right-hand-side `$`.
+
+### OCaml
+
+OCaml provides `|>` for left-to-right value application and
+`Fun.compose` for function composition:
+
+```ocaml
+let mathify =
+  Fun.compose
+    square
+    (Fun.compose addOne double)
+
+let result = 5 |> mathify
+```
+
+`@@` is an application operator, not a function-composition operator.
 
 ### A comparison table
 
-| Language  | Apply      | Compose      | Mix without parens |
-| --------- | ---------- | ------------ | ------------------ |
-| Elixir    | `\|>`      | (wrap in fn) | n/a                |
-| F#        | `\|>`      | `>>`         | No                 |
-| Haskell   | `$`, space | `.`, `>>>`   | Partial (`.`)      |
-| OCaml     | `\|>`      | `@@`         | No                 |
-| **piper** | **`:>`**   | **`>>>`**    | **Yes**            |
+| Language  | Apply            | Compose       | Mix without parens  |
+| --------- | ---------------- | ------------- | ------------------- |
+| Elixir    | `\|>`            | (wrap in fn)  | n/a                 |
+| F#        | `\|>`            | `>>`          | Different syntax    |
+| Haskell   | `$`, application | `.`, `>>>`    | Different direction |
+| OCaml     | `\|>`            | `Fun.compose` | No                  |
+| **piper** | **`:>`**         | **`>>>`**     | **Yes**             |
 
 ---
 
@@ -695,31 +892,107 @@ was rejected here because:
    to know the types.
 2. **Two concepts, two symbols.** "Apply" and "compose" are different
    operations. Giving them different symbols makes code clearer.
-3. **No precedent.** No mainstream functional language overloads the
-   composition operator to also apply.
+3. **No overloaded semantic role.** Keeping `>>>` as composition and
+   `:>` as application means each operator has one meaning.
 
 The two-symbol design keeps each operator doing one thing.
 
-### Why does `>>>` need `{.closure.}`?
+### Why does `>>>` sometimes generate `{.closure.}`?
 
-Without it, `proc(a: A): B` is a **function pointer** — just an
-address, like in C. Function pointers can't capture variables from
-their surroundings. `>>>` needs closures because the returned
-function captures `f` and `g`.
+The implementation distinguishes between direct procedures and
+dynamic or closure-valued stages.
 
-### Why is `:>` a template and not a proc?
+When all stages are ordinary direct procedures, `>>>` can generate an
+ordinary `nimcall` procedure without a closure environment.
 
-A template expands at compile time into `fn(value)`. Zero runtime
-overhead, no intermediate values, works with any expression on the
-left.
+When a stage requires a closure or a dynamic value, `>>>` generates a
+closure instead.
 
-If `:>` were a proc, it would need a specific signature, forcing
-types on the caller. The template approach is more flexible.
+For example:
+
+```nim
+proc double(x: int): int = x * 2
+proc addOne(x: int): int = x + 1
+
+let direct =
+  double >>>
+  addOne
+```
+
+can use a direct `nimcall` representation.
+
+A closure stage requires a closure representation:
+
+```nim
+let n = 10
+
+let addN =
+  proc(x: int): int =
+    x + n
+
+let pipeline =
+  double >>>
+  addN
+```
+
+The distinction avoids forcing every pipeline through a closure
+representation when one is not required.
+
+### Why is `:>` a macro and not a proc?
+
+`:>` is implemented as a compile-time macro so it can transform the
+source expression directly into ordinary function application.
+
+For example:
+
+```nim
+5 :> double >>> addOne >>> square
+```
+
+is lowered to the equivalent nested application:
+
+```nim
+square(addOne(double(5)))
+```
+
+This avoids requiring a runtime pipe object or generic application
+helper and lets the macro handle the syntactic composition structure.
+
+A normal procedure would not provide the same AST-level control over
+the expression.
+
+### Why is `>>>` a macro and not a proc?
+
+`>>>` is also implemented as a compile-time macro so chained
+composition can be flattened before code generation.
+
+```nim
+a >>> b >>> c >>> d
+```
+
+is treated as one composition sequence rather than repeatedly
+constructing intermediate composition objects.
+
+This lets the implementation choose the appropriate generated
+representation:
+
+```text
+all direct procedures
+        ↓
+ordinary nimcall procedure
+
+dynamic/closure stages
+        ↓
+closure procedure
+```
 
 ### Why no `|>`?
 
-`:>` covers the same job with better precedence for mixing. Having
-both would duplicate functionality and confuse which to use.
+`:>` covers the same value-to-function application role with
+precedence specifically chosen for mixing with `>>>`.
+
+Having both would duplicate functionality and create two ways to write
+the same operation.
 
 ### Why no assignment variant of `:>`?
 
@@ -727,8 +1000,10 @@ It was considered and rejected. Making `x :> c` do "assign to `c`"
 if `c` is a variable, and "call `c`" if `c` is a function, conflates
 two unrelated operations. It would break the reader's ability to
 tell what a line does without knowing types, and it breaks
-composition (an assign step returns nothing useful). Use `let` or
-`var` for assignment, as every language does.
+composition because an assignment step does not provide a useful
+callable result.
+
+Use `let` or `var` for assignment, as normal Nim code does.
 
 ---
 
@@ -737,7 +1012,11 @@ composition (an assign step returns nothing useful). Use `let` or
 ### Bind early, apply often
 
 ```nim
-let slugify = trim >>> lower >>> split >>> join
+let slugify =
+  trim >>>
+  lower >>>
+  split >>>
+  join
 
 for s in inputs:
   echo s :> slugify
@@ -747,24 +1026,32 @@ Compose once, apply many times. This is the primary use of `>>>`.
 
 ### Store pipelines in collections
 
+When a collection needs an explicit first-class function type, convert
+the pipelines with `toFn`:
+
 ```nim
-let pipelines: seq[Fn[int, int]] = @[
-  double >>> addOne,
-  double >>> square,
-  addOne >>> double,
-]
+let pipelines: seq[Fn[int, int]] =
+  @[
+    toFn(double >>> addOne),
+    toFn(double >>> square),
+    toFn(addOne >>> double),
+  ]
 ```
 
-You can index, iterate, and dispatch on them.
+You can index, iterate, select, and dispatch on them.
 
 ### Return pipelines from functions
 
 ```nim
 proc makeScaler(factor: int): Fn[int, int] =
-  proc(x: int): int = x * factor
+  proc(x: int): int =
+    x * factor
 
-let triple   = makeScaler(3)
-let timesTen = makeScaler(10)
+let triple =
+  makeScaler(3)
+
+let timesTen =
+  makeScaler(10)
 
 echo 5 :> triple                       # 15
 echo 5 :> timesTen                     # 50
@@ -775,11 +1062,22 @@ echo 5 :> timesTen                     # 50
 ### Compose partial pipelines
 
 ```nim
-let parse   = trim >>> lower
-let split   = (s: string) => s.splitWhitespace
-let join    = (xs: seq[string]) => xs.join("-")
+let parse =
+  trim >>>
+  lower
 
-let slugify = parse >>> split >>> join
+let split =
+  (s: string) =>
+    s.splitWhitespace
+
+let join =
+  (xs: seq[string]) =>
+    xs.join("-")
+
+let slugify =
+  parse >>>
+  split >>>
+  join
 ```
 
 Each stage is named. Change one, the whole pipeline updates.
@@ -814,14 +1112,19 @@ The right side of `:>` must be **callable**. To store the result,
 use `let`:
 
 ```nim
-let c = 5 :> double
+let c =
+  5 :> double
 ```
 
 ### Expecting `>>>` to run something
 
 ```nim
-let p = double >>> addOne
+let p =
+  double >>>
+  addOne
+
 # Nothing has run yet. p is a function.
+
 echo p(5)                          # 11 — now it runs
 ```
 
@@ -838,15 +1141,37 @@ Use `let`/`var` for assignment:
 
 ```nim
 var c: int
-c = 5 :> double
+c =
+  5 :> double
+```
+
+### Expecting every `>>>` result to be an `Fn`
+
+A direct pipeline may be generated as an ordinary `nimcall` procedure:
+
+```nim
+let pipeline =
+  double >>>
+  addOne
+```
+
+When an explicit `Fn` value is required, use `toFn`:
+
+```nim
+let pipeline: Fn[int, int] =
+  toFn(
+    double >>>
+    addOne
+  )
 ```
 
 ### Forgetting that `|>` doesn't exist
 
-If you copy examples from Elixir or F#, replace `|>` with `:>`:
+If you copy examples from Elixir, F#, or OCaml, replace `|>` with
+`:>`:
 
 ```nim
-# Elixir style:
+# Elixir/F#/OCaml style:
 # 5 |> double |> addOne
 
 # Nim with piper:
@@ -999,18 +1324,17 @@ with the equivalent direct call.
 The 2-stage ARC/ORC results vary substantially between runs and should
 not be treated as evidence that `:>` intrinsically makes a pipeline
 faster or slower than direct calls. The 3-stage and 4-stage results are
-much more stable indicators: in this snapshot, `:>` remains within
-approximately four percent of direct execution.
+more stable in this snapshot: `:>` remains within approximately four
+percent of direct execution.
 
-This is consistent with `:>` being a compile-time template that expands
-to direct application rather than introducing a runtime pipeline
-object.
+This is consistent with `:>` being a compile-time macro that lowers
+the expression directly to ordinary function application rather than
+introducing a runtime pipeline object.
 
 ### Composition
 
 `>>>` is different from `:>`. `>>>` creates a reusable function value,
-so it necessarily represents a different execution model from direct
-application.
+so it represents a different execution model from direct application.
 
 In this benchmark, Nim's `>>>` measured:
 
@@ -1084,11 +1408,12 @@ The benchmark should therefore be used to evaluate the implementation
 strategy of `piper` rather than to make broad claims about overall
 language performance.
 
-I am not a developer who regularly codes in anything other than Nim,
-Python, and sometimes JavaScript and C, so you are welcome to improve
-the benchmark implementations and verify whether the benchmark is
-correct. If your implementation is faster and remains methodologically
-fair, I will gladly include it in the benchmarks.
+Contributions that improve implementation fidelity, compiler/runtime
+controls, or measurement methodology are welcome. Faster benchmark
+implementations are also welcome when they preserve semantic
+equivalence and remain methodologically fair. Any significant
+benchmark-methodology changes should be documented alongside the
+results.
 
 ---
 
@@ -1103,65 +1428,99 @@ it mixes cleanly.
 **Q: Can I have `|>` too?**
 
 You could add it back, but it duplicates `:>` and creates confusion
-about which to use. `:>` handles both cases.
+about which to use. `:>` handles the intended value-to-function
+application case.
 
 **Q: What's the difference between `:>` and `>>>` in one sentence?**
 
-`:>` calls a function. `>>>` builds a function. `:>` runs now.
-`>>>` runs later (when you call the result).
+`:>` applies a function to a value. `>>>` builds a function.
+`:>` runs immediately when the expression is evaluated.
+`>>>` builds a callable that runs when you invoke it.
 
 **Q: Does `>>>` run anything when I write `f >>> g`?**
 
-No. `f >>> g` is a function value. Nothing runs until you call it.
+No. `f >>> g` is a function value. Nothing runs until you call the
+result.
 
 **Q: Can I use this with `async`?**
 
 Not tested. `piper` works with synchronous functions. For async
-pipelines, you'd need an async-aware operator.
+pipelines, you'd need an async-aware operator or async-aware stages.
 
 **Q: Does `:>` work with varargs or method call syntax?**
 
-Only with functions that take a single argument. `:>` is designed for
-single-argument transformations.
+`:>` is designed for single-argument transformations. Functions used
+as pipeline stages must be callable with the pipeline value as their
+argument.
 
 **Q: Is `Fn[A, B]` different from `proc(a: A): B {.closure.}`?**
 
-No. `Fn[A, B]` is exactly a type alias for
-`proc(a: A): B {.closure.}`. Use whichever is clearer.
+No. `Fn[A, B]` is an alias for:
+
+```nim
+proc(a: A): B {.closure.}
+```
+
+A direct `>>>` pipeline may instead be generated as a `nimcall`
+procedure when all of its stages are ordinary direct procedures. Use
+`toFn` when an explicit `Fn[A, B]` value is required.
+
+**Q: What does `toFn` do?**
+
+`toFn` converts an ordinary `nimcall` procedure or a generated direct
+pipeline into the first-class `Fn[A, B]` closure type.
+
+```nim
+let mathify: Fn[int, int] =
+  toFn(
+    double >>>
+    addOne >>>
+    square
+  )
+```
+
+Calling `toFn` on an existing `Fn` does not introduce another wrapper.
 
 **Q: Why does `>>>` have `{.gcsafe.}` warning disabled?**
 
-Because `>>>` just forwards calls to `f` and `g`. Whether they are
-gcsafe cannot be known at the definition site. Nim conservatively
-warns. The library suppresses the warning in its own module and
-provides a config in `tests/` and `examples/` to suppress it there.
-If you want strict gcsafe checking, add `{.push warning[GcUnsafe]: on.}`
-in your own code.
+Because `>>>` forwards calls to its stages, and whether those stages
+are GC-safe cannot always be established at the definition site. Nim
+can conservatively warn about this. The library suppresses the warning
+inside its implementation module.
+
+If you want strict GC-safety checking in your own code, configure the
+warning policy explicitly rather than relying on the library's
+internal suppression.
 
 **Q: Can I store different pipelines in the same sequence?**
 
-Yes, if they have the same type signature:
+Yes, provided they have the same `Fn` signature:
 
 ```nim
-let pipelines: seq[Fn[int, int]] = @[
-  double >>> addOne,
-  double >>> square,
-]
+let pipelines: seq[Fn[int, int]] =
+  @[
+    toFn(double >>> addOne),
+    toFn(double >>> square),
+  ]
 ```
 
-For mixed signatures, use a sum type or a base type.
+For mixed signatures, use an appropriate sum type or another
+type-erasure strategy.
 
 **Q: Does `:>` short-circuit anything?**
 
-No. `:>` is plain application. Each stage runs unconditionally.
-For conditional pipelines, use `Option` types and appropriate
-functions.
+No. `:>` is plain function application. Each stage runs
+unconditionally.
+
+For conditional pipelines, use `Option` or another explicit result
+type and appropriate functions.
 
 ---
 
 ## Contributing
 
-Bug reports, feature ideas, and pull requests are welcome.
+Bug reports, feature ideas, benchmark improvements, and pull requests
+are welcome.
 
 ### Setup
 
@@ -1177,6 +1536,8 @@ nimble test
 * Keep the public API surface small.
 * Prefer clarity over cleverness.
 * Update the README if you change the API.
+* Keep benchmark comparisons semantically equivalent and document
+  meaningful methodology changes.
 
 ### Reporting bugs
 
@@ -1185,7 +1546,7 @@ Include:
 * Nim version (`nim --version`)
 * The exact code that fails
 * The full error message
-* Expected vs. actual behavior
+* Expected vs actual behavior
 
 ---
 
@@ -1204,7 +1565,10 @@ Include:
 * `:>` pipe operator
 * `>>>` composition operator
 * `Fn[A, B]` type alias
+* `toFn` first-class function conversion
 * Tests for both operators and their mixing
+* Cross-platform CI
+* Comparative benchmark suite
 
 ---
 
@@ -1217,10 +1581,12 @@ BSD-3-Clause. See [LICENSE](LICENSE) for details.
 ## See also
 
 * [Nim manual — operators](https://nim-lang.org/docs/manual.html#syntax-operators)
+* [Nim manual — macros](https://nim-lang.org/docs/manual.html#macros)
 * [Nim manual — templates](https://nim-lang.org/docs/manual.html#templates)
 * [Elixir pipe operator](https://hexdocs.pm/elixir/Kernel.html#%7C%3E/2)
 * [F# pipe and composition](https://learn.microsoft.com/en-us/dotnet/fsharp/language-reference/symbol-and-operator-reference/)
 * [Haskell Control.Category](https://hackage.haskell.org/package/base/docs/Control-Category.html)
+* [OCaml Fun module](https://ocaml.org/api/Fun.html)
 
 ---
 

@@ -1,24 +1,95 @@
-# Compiled binaries
+# ----------------------------------------------------------------------
+# Compiled binaries and executables
+# ----------------------------------------------------------------------
+
+# Nim
+src/piper/fcompose
+src/piper/pipe
+src/piper.out
 examples/demo
 examples/mixing
 examples/compose_and_apply
-
 tests/test1
 tests/test_fcompose
 tests/test_pipe
 tests/test_mixing
-
 bench/bench_piper
 bench/bench_specialized
+bench/bench_macro
 bench/macro_probe
 
-src/piper/fcompose
-src/piper/pipe
-src/piper.out
+# Comparative benchmark build products
+bench/comparative/build/
 
+# ----------------------------------------------------------------------
+# Compiled object files and intermediate artifacts
+# ----------------------------------------------------------------------
+
+# Generic
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+
+# Haskell
+*.hi
+*.dyn_hi
+*.dyn_o
+
+# OCaml
+*.cmi
+*.cmo
+*.cmx
+*.cmxa
+*.cma
+*.cmxs
+*.annot
+*.o
+
+# ----------------------------------------------------------------------
+# Python
+# ----------------------------------------------------------------------
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ----------------------------------------------------------------------
 # Nim cache
+# ----------------------------------------------------------------------
+
 nimcache/
 *.nimcache/
 
+# ----------------------------------------------------------------------
 # Nimble
+# ----------------------------------------------------------------------
+
 *.nimble.link
+
+# ----------------------------------------------------------------------
+# Editors and OS
+# ----------------------------------------------------------------------
+
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ----------------------------------------------------------------------
+# Benchmark output (uncomment if you decide NOT to commit results)
+# ----------------------------------------------------------------------
+
+# bench/comparative/results/

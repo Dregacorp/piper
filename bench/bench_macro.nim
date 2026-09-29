@@ -1,6 +1,5 @@
 import std/[
   algorithm,
-  macros,
   monotimes,
   times,
   volatile
@@ -8,16 +7,19 @@ import std/[
 
 import piper
 
+
 const
   Iterations = 3_000_000
   Repeats = 9
   InputCount = 1024
 
+
 var blackHole {.global.}: int
 
-# ============================================================
-# Test functions
-# ============================================================
+
+# ============================================================================
+# Test procedures
+# ============================================================================
 
 proc doubleNoInline(x: int): int {.noinline.} =
   x * 2
@@ -34,9 +36,10 @@ proc squareNoInline(x: int): int {.noinline.} =
 proc negateNoInline(x: int): int {.noinline.} =
   -x
 
-# ============================================================
-# Closure values
-# ============================================================
+
+# ============================================================================
+# Closure baselines
+# ============================================================================
 
 let doubleClosure: Fn[int, int] =
   proc(x: int): int =
@@ -57,59 +60,40 @@ let negateClosure: Fn[int, int] =
   proc(x: int): int =
     negateNoInline(x)
 
-# ============================================================
-# Existing >>> implementation
-# ============================================================
+
+# ============================================================================
+# >>> pipelines
+# ============================================================================
 
 let current2 =
-  doubleClosure >>>
-  addOneClosure
+  doubleNoInline >>>
+  addOneNoInline
 
 
 let current3 =
-  doubleClosure >>>
-  addOneClosure >>>
-  squareClosure
+  doubleNoInline >>>
+  addOneNoInline >>>
+  squareNoInline
 
 
 let current4 =
-  doubleClosure >>>
-  addOneClosure >>>
-  squareClosure >>>
-  negateClosure
-
-# ============================================================
-# Production flatCompose implementation
-#
-# This is the public macro from piper/fcompose.nim.
-# ============================================================
-
-let flat2: Fn[int, int] =
-  flatCompose(
-    doubleClosure,
-    addOneClosure
-  )
+  doubleNoInline >>>
+  addOneNoInline >>>
+  squareNoInline >>>
+  negateNoInline
 
 
-let flat3: Fn[int, int] =
-  flatCompose(
-    doubleClosure,
-    addOneClosure,
-    squareClosure
-  )
+# ============================================================================
+# Explicit first-class Fn conversion
+# ============================================================================
+
+let fn3: Fn[int, int] =
+  toFn(current3)
 
 
-let flat4: Fn[int, int] =
-  flatCompose(
-    doubleClosure,
-    addOneClosure,
-    squareClosure,
-    negateClosure
-  )
-
-# ============================================================
+# ============================================================================
 # Direct closure baselines
-# ============================================================
+# ============================================================================
 
 proc benchDirectClosure2(
     inputs: openArray[int]
@@ -176,9 +160,10 @@ proc benchDirectClosure4(
 
   total
 
-# ============================================================
-# Current >>> benchmarks
-# ============================================================
+
+# ============================================================================
+# >>> benchmarks
+# ============================================================================
 
 proc benchCurrent2(
     inputs: openArray[int]
@@ -233,11 +218,12 @@ proc benchCurrent4(
 
   total
 
-# ============================================================
-# flatCompose benchmarks
-# ============================================================
 
-proc benchFlat2(
+# ============================================================================
+# :> fused benchmarks
+# ============================================================================
+
+proc benchPipe2(
     inputs: openArray[int]
   ): int {.noinline.} =
 
@@ -250,12 +236,14 @@ proc benchFlat2(
       ]
 
     total +=
-      flat2(x)
+      x :>
+      doubleNoInline :>
+      addOneNoInline
 
   total
 
 
-proc benchFlat3(
+proc benchPipe3(
     inputs: openArray[int]
   ): int {.noinline.} =
 
@@ -268,12 +256,15 @@ proc benchFlat3(
       ]
 
     total +=
-      flat3(x)
+      x :>
+      doubleNoInline :>
+      addOneNoInline :>
+      squareNoInline
 
   total
 
 
-proc benchFlat4(
+proc benchPipe4(
     inputs: openArray[int]
   ): int {.noinline.} =
 
@@ -286,13 +277,40 @@ proc benchFlat4(
       ]
 
     total +=
-      flat4(x)
+      x :>
+      doubleNoInline :>
+      addOneNoInline :>
+      squareNoInline :>
+      negateNoInline
 
   total
 
-# ============================================================
-# Rebuilding current >>> each iteration
-# ============================================================
+
+# ============================================================================
+# First-class Fn benchmark
+# ============================================================================
+
+proc benchFn3(
+    inputs: openArray[int]
+  ): int {.noinline.} =
+
+  var total = 0
+
+  for i in 0 ..< Iterations:
+    let x =
+      inputs[
+        i and (InputCount - 1)
+      ]
+
+    total +=
+      fn3(x)
+
+  total
+
+
+# ============================================================================
+# Rebuilding >>> each iteration
+# ============================================================================
 
 proc benchBuildCurrent3(
     inputs: openArray[int]
@@ -306,21 +324,22 @@ proc benchBuildCurrent3(
         i and (InputCount - 1)
       ]
 
-    let pipeline: Fn[int, int] =
-      doubleClosure >>>
-      addOneClosure >>>
-      squareClosure
+    let pipeline =
+      doubleNoInline >>>
+      addOneNoInline >>>
+      squareNoInline
 
     total +=
       pipeline(x)
 
   total
 
-# ============================================================
-# Rebuilding flatCompose each iteration
-# ============================================================
 
-proc benchBuildFlat3(
+# ============================================================================
+# Explicit toFn construction each iteration
+# ============================================================================
+
+proc benchBuildToFn3(
     inputs: openArray[int]
   ): int {.noinline.} =
 
@@ -332,21 +351,23 @@ proc benchBuildFlat3(
         i and (InputCount - 1)
       ]
 
-    let pipeline: Fn[int, int] =
-      flatCompose(
-        doubleClosure,
-        addOneClosure,
-        squareClosure
-      )
+    let pipeline =
+      doubleNoInline >>>
+      addOneNoInline >>>
+      squareNoInline
+
+    let fn =
+      toFn(pipeline)
 
     total +=
-      pipeline(x)
+      fn(x)
 
   total
 
-# ============================================================
+
+# ============================================================================
 # Benchmark harness
-# ============================================================
+# ============================================================================
 
 template runBenchmark(
     name: string,
@@ -354,7 +375,6 @@ template runBenchmark(
     inputs: untyped
   ) =
 
-  # Warm-up.
   discard benchmark(inputs)
 
   var samples:
@@ -400,9 +420,10 @@ template runBenchmark(
 
   echo ""
 
-# ============================================================
+
+# ============================================================================
 # Main
-# ============================================================
+# ============================================================================
 
 proc main() =
   var inputs:
@@ -428,9 +449,9 @@ proc main() =
       (state mod 10000) +
       i
 
-  # ----------------------------------------------------------
+  # --------------------------------------------------------------------------
   # Correctness
-  # ----------------------------------------------------------
+  # --------------------------------------------------------------------------
 
   const TestValue = 7
 
@@ -461,27 +482,6 @@ proc main() =
       )
     )
 
-  if expected2 != 15:
-    raise newException(
-      AssertionDefect,
-      "unexpected 2-stage baseline result: " &
-      $expected2
-    )
-
-  if expected3 != 225:
-    raise newException(
-      AssertionDefect,
-      "unexpected 3-stage baseline result: " &
-      $expected3
-    )
-
-  if expected4 != -225:
-    raise newException(
-      AssertionDefect,
-      "unexpected 4-stage baseline result: " &
-      $expected4
-    )
-
   if current2(TestValue) != expected2:
     raise newException(
       AssertionDefect,
@@ -500,40 +500,49 @@ proc main() =
       "current >>> 4-stage result is incorrect"
     )
 
-  if flat2(TestValue) != expected2:
+  if fn3(TestValue) != expected3:
     raise newException(
       AssertionDefect,
-      "flatCompose 2-stage result is incorrect"
+      "toFn result is incorrect"
     )
 
-  if flat3(TestValue) != expected3:
+  if (
+    TestValue :>
+    doubleNoInline :>
+    addOneNoInline
+  ) != expected2:
     raise newException(
       AssertionDefect,
-      "flatCompose 3-stage result is incorrect"
+      ":> 2-stage result is incorrect"
     )
 
-  if flat4(TestValue) != expected4:
+  if (
+    TestValue :>
+    doubleNoInline :>
+    addOneNoInline :>
+    squareNoInline
+  ) != expected3:
     raise newException(
       AssertionDefect,
-      "flatCompose 4-stage result is incorrect"
+      ":> 3-stage result is incorrect"
     )
 
-  # ----------------------------------------------------------
-  # Header
-  # ----------------------------------------------------------
+  if (
+    TestValue :>
+    doubleNoInline :>
+    addOneNoInline :>
+    squareNoInline :>
+    negateNoInline
+  ) != expected4:
+    raise newException(
+      AssertionDefect,
+      ":> 4-stage result is incorrect"
+    )
 
-  echo "piper flat-composition benchmark"
-  echo "iterations: ",
-    Iterations
-
-  echo "repeats:    ",
-    Repeats
-
+  echo "piper composition benchmark"
+  echo "iterations: ", Iterations
+  echo "repeats:    ", Repeats
   echo ""
-
-  # ----------------------------------------------------------
-  # Direct closure
-  # ----------------------------------------------------------
 
   runBenchmark(
     "1. direct closure 2-stage",
@@ -553,63 +562,57 @@ proc main() =
     inputs
   )
 
-  # ----------------------------------------------------------
-  # Current >>>
-  # ----------------------------------------------------------
-
   runBenchmark(
-    "4. current >>> 2-stage",
+    "4. >>> 2-stage",
     benchCurrent2,
     inputs
   )
 
   runBenchmark(
-    "5. current >>> 3-stage",
+    "5. >>> 3-stage",
     benchCurrent3,
     inputs
   )
 
   runBenchmark(
-    "6. current >>> 4-stage",
+    "6. >>> 4-stage",
     benchCurrent4,
     inputs
   )
 
-  # ----------------------------------------------------------
-  # flatCompose
-  # ----------------------------------------------------------
-
   runBenchmark(
-    "7. flatCompose 2-stage",
-    benchFlat2,
+    "7. fused :> 2-stage",
+    benchPipe2,
     inputs
   )
 
   runBenchmark(
-    "8. flatCompose 3-stage",
-    benchFlat3,
+    "8. fused :> 3-stage",
+    benchPipe3,
     inputs
   )
 
   runBenchmark(
-    "9. flatCompose 4-stage",
-    benchFlat4,
+    "9. fused :> 4-stage",
+    benchPipe4,
     inputs
   )
 
-  # ----------------------------------------------------------
-  # Construction
-  # ----------------------------------------------------------
+  runBenchmark(
+    "10. first-class Fn 3-stage",
+    benchFn3,
+    inputs
+  )
 
   runBenchmark(
-    "10. rebuild current >>> 3-stage",
+    "11. rebuild >>> 3-stage",
     benchBuildCurrent3,
     inputs
   )
 
   runBenchmark(
-    "11. rebuild flatCompose 3-stage",
-    benchBuildFlat3,
+    "12. rebuild + toFn 3-stage",
+    benchBuildToFn3,
     inputs
   )
 

@@ -1,23 +1,14 @@
-## The `:>` pipe operator.
+## Compatibility module for piper's pipe API.
 ##
-## Applies a value on the left to a function on the right, immediately.
+## The public implementation of `:>` lives in fcompose.nim so that
+## `:>` and `>>>` can share the same compile-time AST machinery.
 ##
-## `:>` binds **loosely** (OP2). This is looser than `>>>` (OP5), so
-## you can mix `:>` and `>>>` in a single chain without parentheses:
+## Existing code using:
 ##
-## .. code-block:: nim
-##   echo 5 :> double >>> addOne >>> square     # 121
+##   import piper/pipe
 ##
-## And it chains with itself:
-##
-## .. code-block:: nim
-##   echo 5 :> double :> addOne :> square       # 121
+## continues to work.
 
-template `:>`*(value: untyped, fn: untyped): untyped =
-  ## Pipe `value` into `fn`. Runs immediately and returns the result.
-  ##
-  ## .. code-block:: nim
-  ##   echo 5 :> double             # 10
-  ##   echo 5 :> double :> addOne   # 11
-  ##   echo 5 :> toStr              # "5"
-  (fn)(value)
+import ./fcompose
+
+export fcompose

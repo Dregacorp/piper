@@ -1,42 +1,123 @@
 ## Function composition for piper.
 ##
-## `>>>` composes two unary functions into a new function.
+## Public API:
 ##
-## `Fn[A, B]` is the public first-class unary function type.
+##   Fn[A, B] — first-class unary closure type
+##   >>>       — left-to-right function composition
+##   :>        — immediate value-to-function application
+##   toFn      — explicit conversion to Fn
 ##
-## `flatCompose` composes two or more unary functions into a
-## single closure without introducing nested composition closures.
+## The implementation is compile-time oriented.
+##
+## Example:
+##
+##   let pipeline =
+##     double >>>
+##     addOne >>>
+##     square
+##
+## generates one ordinary nimcall procedure equivalent to:
+##
+##   proc(x: int): int =
+##     square(addOne(double(x)))
+##
+## Immediate application:
+##
+##   5 :> double >>> addOne >>> square
+##
+## is lowered directly to:
+##
+##   square(addOne(double(5)))
+##
+## No public flatCompose helper is required.
 
 import std/macros
+import std/typetraits
 
 {.push warning[GcUnsafe]: off.}
 
+
 type
   Fn*[A, B] = proc(a: A): B {.closure.}
-    ## A first-class closure from `A` to `B`.
+    ## First-class unary closure from `A` to `B`.
 
 
-proc `>>>`*[A, B, C](
-    f: proc(a: A): B {.closure.},
-    g: proc(b: B): C {.closure.}
-  ): proc(a: A): C {.closure.} {.inline.} =
-  ## Compose `f` and `g` left-to-right.
-  ##
-  ## Given:
-  ##
-  ##   f : A -> B
-  ##   g : B -> C
-  ##
-  ## the resulting function is:
-  ##
-  ##   A -> C
-  ##
-  ## Nothing executes while the composition is constructed.
+# ============================================================================
+# AST helpers
+# ============================================================================
+
+proc unwrapPar(
+    node: NimNode
+  ): NimNode =
+  ## Remove redundant parenthesis nodes.
 
   result =
-    proc(a: A): C =
-      g(f(a))
+    node
 
+  while result.kind == nnkPar:
+    result =
+      result[0]
+
+
+proc isComposeNode(
+    node: NimNode
+  ): bool =
+  ## Return true when `node` is a syntactic `>>>` expression.
+
+  let current =
+    unwrapPar(node)
+
+  if current.kind != nnkInfix:
+    return false
+
+  if current.len != 3:
+    return false
+
+  let operator =
+    current[0]
+
+  if operator.kind notin {nnkIdent, nnkSym}:
+    return false
+
+  operator.repr == ">>>"
+
+
+proc collectComposeStages(
+    node: NimNode,
+    stages: var seq[NimNode]
+  ) =
+  ## Flatten a syntactic composition tree.
+  ##
+  ##   a >>> b >>> c >>> d
+  ##
+  ## becomes:
+  ##
+  ##   [a, b, c, d]
+
+  let current =
+    unwrapPar(node)
+
+  if isComposeNode(current):
+    collectComposeStages(
+      current[1],
+      stages
+    )
+
+    collectComposeStages(
+      current[2],
+      stages
+    )
+
+    return
+
+  stages.add(
+    current
+  )
+
+
+# ============================================================================
+# Procedure type extraction
+# ============================================================================
 
 proc extractUnaryProcTypes(
     typeNode: NimNode
@@ -45,21 +126,7 @@ proc extractUnaryProcTypes(
     inputType: NimNode,
     outputType: NimNode
   ] =
-  ## Extract the input and output types from a unary procedure.
-  ##
-  ## Nim 2.2.12 can expose a procedure type in compact form:
-  ##
-  ##   proc[ReturnType, InputType]
-  ##
-  ## For example:
-  ##
-  ##   proc(x: int): string
-  ##
-  ## may appear as:
-  ##
-  ##   proc[string, int]
-  ##
-  ## A normal nnkProcTy representation is also accepted.
+  ## Extract input/output types from a unary procedure type.
 
   result.valid =
     false
@@ -70,47 +137,32 @@ proc extractUnaryProcTypes(
   result.outputType =
     newEmptyNode()
 
-  # --------------------------------------------------------------
-  # Compact Nim procedure representation:
-  #
-  #   BracketExpr
-  #     Sym "proc"
-  #     ReturnType
-  #     InputType
-  # --------------------------------------------------------------
+  # --------------------------------------------------------------------------
+  # Compact representation.
+  # --------------------------------------------------------------------------
 
   if typeNode.kind == nnkBracketExpr:
-    if typeNode.len != 3:
-      return
+    if typeNode.len == 3:
+      let head =
+        typeNode[0]
 
-    if typeNode[0].kind != nnkSym and
-       typeNode[0].kind != nnkIdent:
-      return
+      if head.kind in {nnkSym, nnkIdent} and
+         head.repr == "proc":
 
-    if typeNode[0].repr != "proc":
-      return
+        result.outputType =
+          typeNode[1]
 
-    result.outputType =
-      typeNode[1]
+        result.inputType =
+          typeNode[2]
 
-    result.inputType =
-      typeNode[2]
+        result.valid =
+          true
 
-    result.valid =
-      true
+        return
 
-    return
-
-  # --------------------------------------------------------------
-  # Normal procedure type representation:
-  #
-  #   nnkProcTy(
-  #     nnkFormalParams(
-  #       ReturnType,
-  #       identDefs(Parameter, ParameterType, Default)
-  #     )
-  #   )
-  # --------------------------------------------------------------
+  # --------------------------------------------------------------------------
+  # Normal procedure type representation.
+  # --------------------------------------------------------------------------
 
   if typeNode.kind != nnkProcTy:
     return
@@ -133,7 +185,7 @@ proc extractUnaryProcTypes(
   if parameter.kind != nnkIdentDefs:
     return
 
-  if parameter.len != 3:
+  if parameter.len < 3:
     return
 
   result.outputType =
@@ -146,65 +198,71 @@ proc extractUnaryProcTypes(
     true
 
 
+# ============================================================================
+# Stage classification
+# ============================================================================
+
 proc isStableStageSymbol(
     node: NimNode
   ): bool =
-  ## Return true when `node` is an immutable/stable symbol whose
-  ## function value cannot change after construction.
+  ## Return true for callable symbols whose value can be referenced directly.
   ##
-  ## These symbols can be referenced directly by the generated
-  ## closure without creating an intermediate local capture.
-  ##
-  ## Mutable variables and parameters are deliberately excluded.
-  ## They are captured into a generated `let` so that flatCompose
-  ## observes their value at construction time.
+  ## Other expressions are evaluated once into a generated `let`.
 
   if node.kind != nnkSym:
     return false
 
-  let kind =
-    symKind(node)
+  case symKind(node)
+  of nskLet,
+     nskConst,
+     nskProc,
+     nskFunc,
+     nskConverter,
+     nskMethod:
+    true
 
-  kind in {
-    nskLet,
-    nskConst,
-    nskProc,
-    nskFunc,
-    nskConverter,
-    nskMethod
-  }
+  else:
+    false
 
 
-macro flatCompose*(
+proc isDirectOrdinaryProc(
+    node: NimNode
+  ): bool =
+  ## Return true for a directly referenced procedure that does not
+  ## require a closure environment.
+
+  if node.kind != nnkSym:
+    return false
+
+  case symKind(node)
+  of nskProc,
+     nskFunc,
+     nskConverter,
+     nskMethod:
+    discard
+
+  else:
+    return false
+
+  not hasClosure(node)
+
+
+# ============================================================================
+# Internal flattened composition
+# ============================================================================
+
+macro makeComposed(
     args: varargs[typed]
   ): untyped =
-  ## Compose two or more unary functions into one closure.
+  ## Generate one callable from a flattened sequence of stages.
   ##
-  ## Example:
+  ## Ordinary direct procedures become one normal nimcall procedure.
   ##
-  ##   let pipeline =
-  ##     flatCompose(
-  ##       double,
-  ##       addOne,
-  ##       square
-  ##     )
-  ##
-  ## The generated closure is equivalent to:
-  ##
-  ##   proc(x) =
-  ##     square(addOne(double(x)))
-  ##
-  ## Function-producing expressions are evaluated exactly once
-  ## during construction.
-  ##
-  ## Stable immutable function symbols are used directly to avoid
-  ## unnecessary capture locals.
-  ##
-  ## Mutable variables and arbitrary expressions are captured once.
+  ## Dynamic/closure stages become one closure.
 
   if args.len < 2:
     error(
-      "flatCompose requires at least two functions",
+      ">>> requires at least two unary functions",
       if args.len > 0:
         args[0]
       else:
@@ -212,8 +270,11 @@ macro flatCompose*(
     )
 
   var
-    inputType: NimNode
-    outputType: NimNode
+    inputType =
+      newEmptyNode()
+
+    outputType =
+      newEmptyNode()
 
     stageSymbols =
       newSeq[NimNode](args.len)
@@ -221,9 +282,12 @@ macro flatCompose*(
     statements =
       newStmtList()
 
-  # --------------------------------------------------------------
-  # Validate every stage and determine the complete signature.
-  # --------------------------------------------------------------
+    allDirectOrdinary =
+      true
+
+  # --------------------------------------------------------------------------
+  # Validate stages and establish the complete signature.
+  # --------------------------------------------------------------------------
 
   for index, arg in args:
     let typeNode =
@@ -236,10 +300,9 @@ macro flatCompose*(
 
     if not signature.valid:
       error(
-        "flatCompose argument " &
+        ">>> stage " &
         $index &
-        " must be a unary procedure or closure; " &
-        "got type: " &
+        " must be a unary procedure; got type: " &
         typeNode.repr,
         arg
       )
@@ -252,20 +315,17 @@ macro flatCompose*(
       outputType =
         signature.outputType
 
-  # --------------------------------------------------------------
-  # Prepare the stages.
+    if not isDirectOrdinaryProc(arg):
+      allDirectOrdinary =
+        false
+
+  # --------------------------------------------------------------------------
+  # Prepare stages.
   #
-  # Stable immutable symbols:
+  # Stable symbols are referenced directly.
   #
-  #   use the original symbol directly.
-  #
-  # Mutable variables / arbitrary expressions:
-  #
-  #   let stageN = expression
-  #
-  # This gives us both correctness and the lowest practical
-  # overhead for ordinary immutable function values.
-  # --------------------------------------------------------------
+  # Dynamic values and expressions are evaluated once.
+  # --------------------------------------------------------------------------
 
   for index, arg in args:
     if isStableStageSymbol(arg):
@@ -288,13 +348,11 @@ macro flatCompose*(
             `arg`
       )
 
-  # --------------------------------------------------------------
+  # --------------------------------------------------------------------------
   # Build:
   #
-  #   final(first(value))
-  #
-  # without creating intermediate composition closures.
-  # --------------------------------------------------------------
+  #   stageN(stageN-1(...stage0(value)...))
+  # --------------------------------------------------------------------------
 
   let input =
     genSym(
@@ -315,44 +373,199 @@ macro flatCompose*(
         body
       )
 
-  # --------------------------------------------------------------
-  # Generate exactly one closure.
-  # --------------------------------------------------------------
+  # --------------------------------------------------------------------------
+  # Generate the callable.
+  #
+  # IMPORTANT:
+  #
+  # Do NOT mark the ordinary path `{.inline.}`.
+  #
+  # `inline` is a calling convention in Nim. We specifically want
+  # an ordinary nimcall procedure here so that:
+  #
+  #   toFn(pipeline)
+  #
+  # can perform Nim's normal nimcall -> closure conversion.
+  # --------------------------------------------------------------------------
 
-  if outputType.kind == nnkEmpty:
-    statements.add(
-      quote do:
-        (
-          proc(`input`: `inputType`) {.closure.} =
-            `body`
-        )
-    )
+  let generatedProc =
+    if outputType.kind == nnkEmpty:
+
+      if allDirectOrdinary:
+        quote do:
+          (
+            proc(`input`: `inputType`) {.nimcall.} =
+              `body`
+          )
+
+      else:
+        quote do:
+          (
+            proc(`input`: `inputType`) {.closure.} =
+              `body`
+          )
+
+    else:
+
+      if allDirectOrdinary:
+        quote do:
+          (
+            proc(`input`: `inputType`): `outputType` {.nimcall.} =
+              `body`
+          )
+
+      else:
+        quote do:
+          (
+            proc(`input`: `inputType`): `outputType` {.closure.} =
+              `body`
+          )
+
+  if statements.len == 0:
+    result =
+      generatedProc
+
   else:
     statements.add(
-      quote do:
-        (
-          proc(`input`: `inputType`): `outputType` {.closure.} =
-            `body`
-        )
+      generatedProc
     )
 
-  # --------------------------------------------------------------
-  # Return:
-  #
-  #   block:
-  #     let stage0 = ...
-  #     let stage1 = ...
-  #     proc(value) = ...
-  #
-  # Only non-stable stages produce the local lets.
-  # --------------------------------------------------------------
+    result =
+      newTree(
+        nnkBlockExpr,
+        newEmptyNode(),
+        statements
+      )
+
+
+# ============================================================================
+# Public >>>
+# ============================================================================
+
+macro `>>>`*(
+    lhs: untyped,
+    rhs: untyped
+  ): untyped =
+  ## Compose functions from left to right.
+  ##
+  ##   a >>> b >>> c
+  ##
+  ## is flattened before the typed implementation is generated.
+
+  var stages:
+    seq[NimNode] = @[]
+
+  collectComposeStages(
+    lhs,
+    stages
+  )
+
+  collectComposeStages(
+    rhs,
+    stages
+  )
+
+  if stages.len < 2:
+    error(
+      ">>> requires at least two unary functions",
+      lhs
+    )
 
   result =
-    newTree(
-      nnkBlockExpr,
-      newEmptyNode(),
-      statements
+    newCall(
+      bindSym("makeComposed")
     )
+
+  for stage in stages:
+    result.add(
+      stage
+    )
+
+
+# ============================================================================
+# Public :>
+# ============================================================================
+
+macro `:>`*(
+    value: typed,
+    stage: untyped
+  ): untyped =
+  ## Apply a value immediately through one function or an entire
+  ## composition segment.
+  ##
+  ##   x :> a >>> b >>> c
+  ##
+  ## becomes:
+  ##
+  ##   c(b(a(x)))
+  ##
+  ## without constructing a composition object.
+
+  var stages:
+    seq[NimNode] = @[]
+
+  let normalizedStage =
+    unwrapPar(stage)
+
+  if isComposeNode(normalizedStage):
+    collectComposeStages(
+      normalizedStage,
+      stages
+    )
+
+  else:
+    stages.add(
+      normalizedStage
+    )
+
+  if stages.len == 0:
+    error(
+      ":> requires a callable stage",
+      stage
+    )
+
+  var expression =
+    newCall(
+      stages[0],
+      value
+    )
+
+  for index in 1 ..< stages.len:
+    expression =
+      newCall(
+        stages[index],
+        expression
+      )
+
+  result =
+    expression
+
+
+# ============================================================================
+# Public toFn
+# ============================================================================
+
+proc toFn*[A, B](
+    value: proc(a: A): B {.nimcall.}
+  ): Fn[A, B] {.inline.} =
+  ## Convert an ordinary nimcall procedure into one closure.
+  ##
+  ## This is the explicit boundary between the zero-environment
+  ## `>>>` representation and the first-class `Fn` representation.
+
+  result =
+    proc(a: A): B =
+      value(a)
+
+
+proc toFn*[A, B](
+    value: Fn[A, B]
+  ): Fn[A, B] {.inline.} =
+  ## An existing Fn value is already a closure.
+  ##
+  ## No additional wrapping is introduced.
+
+  value
 
 
 {.pop.}

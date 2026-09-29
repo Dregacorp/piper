@@ -1,21 +1,23 @@
-## piper — function composition and piping for Nim.
+## piper — function composition and value piping for Nim.
 ##
-## Public operators:
+## Public API:
 ##
-## - `:>`  — immediately applies a value to a unary function.
-## - `>>>` — composes two unary functions into a new function.
+##   >>> — left-to-right function composition
+##   :>  — value-to-function application
+##   Fn  — optional first-class unary closure type
 ##
-## Public type:
+## The implementation is compile-time oriented:
 ##
-## - `Fn[A, B]` — first-class unary closure type.
+##   x :> a >>> b >>> c
 ##
-## Public optimization:
+## is lowered directly to:
 ##
-## - `flatCompose` — compile-time flat composition that avoids
-##   nested composition closures.
+##   c(b(a(x)))
+##
+## when possible.
+##
+## No public flat-composition helper is required.
 
-import ./piper/pipe
 import ./piper/fcompose
 
-export pipe
 export fcompose

@@ -26,25 +26,27 @@ functions, and the two mix naturally.**
 
 ## Table of contents
 
-- [Motivation](#motivation)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [API reference](#api-reference)
-  - [`:` — pipe a value](#-pipe-a-value)
-  - [`>>>` — compose functions](#-compose-functions)
-  - [`Fn[A, B]` — the function type](#fna-b--the-function-type)
-- [Mixing pipes and composition](#mixing-pipes-and-composition)
-- [Real-world examples](#real-world-examples)
-- [Comparison with other languages](#comparison-with-other-languages)
-- [Precedence: why `:>` and not `|>`](#precedence-why--and-not-)
-- [Design decisions](#design-decisions)
-- [Patterns and idioms](#patterns-and-idioms)
-- [Common mistakes](#common-mistakes)
-- [Testing](#testing)
-- [Running the examples](#running-the-examples)
-- [FAQ](#faq)
-- [Contributing](#contributing)
-- [License](#license)
+* [Motivation](#motivation)
+* [Installation](#installation)
+* [Quick start](#quick-start)
+* [API reference](#api-reference)
+
+  * [`:>` — pipe a value](#-pipe-a-value)
+  * [`>>>` — compose functions](#-compose-functions)
+  * [`Fn[A, B]` — the function type](#fna-b--the-function-type)
+* [Mixing pipes and composition](#mixing-pipes-and-composition)
+* [Real-world examples](#real-world-examples)
+* [Comparison with other languages](#comparison-with-other-languages)
+* [Precedence: why `:>` and not `|>`](#precedence-why--and-not-)
+* [Design decisions](#design-decisions)
+* [Patterns and idioms](#patterns-and-idioms)
+* [Common mistakes](#common-mistakes)
+* [Testing](#testing)
+* [Running the examples](#running-the-examples)
+* [Benchmark](#benchmark)
+* [FAQ](#faq)
+* [Contributing](#contributing)
+* [License](#license)
 
 ---
 
@@ -196,7 +198,7 @@ echo 5 :> double >>> addOne >>> square     # 121
 `piper` exports exactly three things. Everything else is
 implementation detail.
 
-### `:` — pipe a value
+### `:>` — pipe a value
 
 ```nim
 template `:>`*(value: untyped, fn: untyped): untyped
@@ -300,7 +302,8 @@ let pipelines: seq[Fn[int, int]] = @[
 
 # Pass to a function
 proc applyToAll(xs: seq[int], f: Fn[int, int]): seq[int] =
-  for x in xs: result.add(f(x))
+  for x in xs:
+    result.add(f(x))
 
 echo applyToAll(@[1, 2, 3], mathify)         # @[9, 25, 49]
 
@@ -442,16 +445,19 @@ import std/strutils
 import piper
 
 proc notEmpty(s: string): string =
-  if s.len == 0: raise newException(ValueError, "empty")
+  if s.len == 0:
+    raise newException(ValueError, "empty")
   s
 
 proc maxLen(n: int): proc(s: string): string =
   result = proc(s: string): string =
-    if s.len > n: raise newException(ValueError, "too long")
+    if s.len > n:
+      raise newException(ValueError, "too long")
     s
 
 proc isNumeric(s: string): string =
-  if not s.allCharsInSet({'0'..'9'}): raise newException(ValueError, "not numeric")
+  if not s.allCharsInSet({'0'..'9'}):
+    raise newException(ValueError, "not numeric")
   s
 
 let validate = notEmpty >>> maxLen(10) >>> isNumeric
@@ -624,13 +630,13 @@ result = mathify 5
 
 ### A comparison table
 
-| Language        | Apply            | Compose           | Mix without parens |
-| --------------- | ---------------- | ----------------- | ------------------ |
-| Elixir          | `\|>`           | (wrap in fn)      | n/a                |
-| F#              | `\|>`           | `>>`            | No                 |
-| Haskell         | `$`, space     | `.`, `>>>`    | Partial (`.`)    |
-| OCaml           | `\|>`           | `@@`            | No                 |
-| **piper** | **`:>`** | **`>>>`** | **Yes**      |
+| Language  | Apply      | Compose      | Mix without parens |
+| --------- | ---------- | ------------ | ------------------ |
+| Elixir    | `\|>`      | (wrap in fn) | n/a                |
+| F#        | `\|>`      | `>>`         | No                 |
+| Haskell   | `$`, space | `.`, `>>>`   | Partial (`.`)      |
+| OCaml     | `\|>`      | `@@`         | No                 |
+| **piper** | **`:>`**   | **`>>>`**    | **Yes**            |
 
 ---
 
@@ -639,35 +645,35 @@ result = mathify 5
 Nim computes operator precedence from the **first character** of the
 operator. This is not something a library can override.
 
-| First char              | Level | Meaning        |
-| ----------------------- | ----- | -------------- |
-| `$` `^`             | 10    | highest        |
-| `*` `/` `\` `%` | 9     | multiplicative |
+| First char       | Level | Meaning        |
+| ---------------- | ----- | -------------- |
+| `$` `^`          | 10    | highest        |
+| `*` `/` `\` `%`  | 9     | multiplicative |
 | `+` `-` `~` `\|` | 8     | additive       |
-| `&`                   | 7     |                |
-| `.`                   | 6     |                |
-| `=` `<` `>` `!` | 5     | comparison     |
-| `and`                 | 4     |                |
-| `or` `xor`          | 3     |                |
-| `@` `:` `?`       | 2     | lowest binary  |
+| `&`              | 7     |                |
+| `.`              | 6     |                |
+| `=` `<` `>` `!`  | 5     | comparison     |
+| `and`            | 4     |                |
+| `or` `xor`       | 3     |                |
+| `@` `:` `?`      | 2     | lowest binary  |
 
-- `|>` starts with `|`, level **8**. Too tight. It grabs
+* `|>` starts with `|`, level **8**. Too tight. It grabs
   `5 |> double` before `>>>` can grab `double >>> addOne`.
-- `:>` starts with `:`, level **2**. Looser than `>>>` (level 5).
+* `:>` starts with `:`, level **2**. Looser than `>>>` (level 5).
   `>>>` groups first, then `:>` applies.
 
 Given the restriction, `:>` is one of the few short symbols that
 work. Other options considered:
 
-| Symbol  | Level | Works | Notes                        |
-| ------- | ----- | ----- | ---------------------------- |
-| `\|>`  | 8     | ❌    | Too tight                    |
-| `\|>>` | 8     | ❌    | Same                         |
-| `:>`  | 2     | ✅    | Readable                     |
-| `::>` | 2     | ✅    | Uglier                       |
-| `?>`  | 2     | ✅    | Reads as "maybe," not "pipe" |
-| `->`  | 0     | ✅    | Conflicts with`std/sugar`  |
-| `@>`  | 2     | ✅    | Confusing next to`@[...]`  |
+| Symbol | Level | Works | Notes                        |
+| ------ | ----- | ----- | ---------------------------- |
+| `\|>`  | 8     | ❌     | Too tight                    |
+| `\|>>` | 8     | ❌     | Same                         |
+| `:>`   | 2     | ✅     | Readable                     |
+| `::>`  | 2     | ✅     | Uglier                       |
+| `?>`   | 2     | ✅     | Reads as "maybe," not "pipe" |
+| `->`   | 0     | ✅     | Conflicts with `std/sugar`   |
+| `@>`   | 2     | ✅     | Confusing next to `@[...]`   |
 
 `:>` was chosen for being short, easy to type, and clear.
 
@@ -680,9 +686,9 @@ functions.
 
 ### Why two operators instead of one?
 
-You could overload `>>>` to mean "apply if left is a value, compose
-if left is a function." Some libraries do this. It was rejected here
-because:
+You could overload `>>>` to mean "apply if the left side is a value,
+compose if the left side is a function." Some libraries do this. It
+was rejected here because:
 
 1. **Ambiguity for readers.** `f >>> g` doesn't tell you whether `f`
    is a function being composed or a value being applied. You have
@@ -862,21 +868,21 @@ nimble test
 
 This runs four suites:
 
-| Suite                 | Tests | Covers                |
-| --------------------- | ----- | --------------------- |
+| Suite               | Tests | Covers                |
+| ------------------- | ----- | --------------------- |
 | `piper`             | 8     | integration tests     |
-| `fcompose`          | 23    | `>>>` composition   |
-| `pipe`              | 30    | `:>` application    |
+| `fcompose`          | 23    | `>>>` composition     |
+| `pipe`              | 30    | `:>` application      |
 | `mixing :> and >>>` | 10    | precedence and mixing |
 
 **Total: 71 tests.**
 
 The test files live in `tests/`:
 
-- `tests/test1.nim` — integration
-- `tests/test_fcompose.nim` — `>>>` unit tests
-- `tests/test_pipe.nim` — `:>` unit tests
-- `tests/test_mixing.nim` — precedence and mixing
+* `tests/test1.nim` — integration
+* `tests/test_fcompose.nim` — `>>>` unit tests
+* `tests/test_pipe.nim` — `:>` unit tests
+* `tests/test_mixing.nim` — precedence and mixing
 
 To run a single suite:
 
@@ -890,10 +896,10 @@ nim c -r tests/test_mixing.nim
 
 Three complete demos live in `examples/`:
 
-| File                               | What it shows                           |
-| ---------------------------------- | --------------------------------------- |
+| File                             | What it shows                           |
+| -------------------------------- | --------------------------------------- |
 | `examples/demo.nim`              | Every feature in one file, 10 sections  |
-| `examples/mixing.nim`            | `:>` and `>>>` mixed without parens |
+| `examples/mixing.nim`            | `:>` and `>>>` mixed without parens     |
 | `examples/compose_and_apply.nim` | Build super functions, pass them around |
 
 Run any of them directly:
@@ -909,6 +915,180 @@ nimble demo
 nimble mixing
 nimble compose_apply
 ```
+
+---
+
+## Benchmark
+
+`piper` was benchmarked against equivalent pipe/application and
+composition patterns in Nim, Haskell, Elixir, F#, and OCaml.
+
+The benchmark measures three pipeline shapes:
+
+* direct nested calls
+* native pipe/application syntax
+* function composition
+
+Each case executes **3,000,000 complete pipeline iterations** and
+uses **9 measured samples**, reporting the median.
+
+### Benchmark environment
+
+| Toolchain           | Version                |
+| ------------------- | ---------------------- |
+| Nim                 | 2.2.12                 |
+| Haskell / GHC       | 9.10.3                 |
+| Elixir / Erlang/OTP | Elixir 1.20.4 / OTP 29 |
+| F# / .NET           | .NET 10.0.12           |
+| OCaml               | 5.3.0                  |
+
+The benchmark sources are in `bench/comparative/`.
+
+Run the complete comparison with:
+
+```bash
+python3 bench/comparative/run_all.py
+```
+
+Results are also written to:
+
+```text
+bench/comparative/results/latest.csv
+bench/comparative/results/latest.md
+```
+
+### Results
+
+Lower `ns/op` means less time per complete pipeline execution.
+
+| Language | Stage | Direct ns/op | Pipe ns/op | Compose ns/op |
+| -------- | ----- | ------------ | ---------- | ------------- |
+| Nim-ARC  | 2     | 4.929        | 3.091      | 12.128        |
+| Nim-ARC  | 3     | 8.783        | 8.834      | 15.032        |
+| Nim-ARC  | 4     | 11.590       | 12.026     | 17.725        |
+| Nim-ORC  | 2     | 2.629        | 4.881      | 11.932        |
+| Nim-ORC  | 3     | 8.498        | 8.438      | 14.880        |
+| Nim-ORC  | 4     | 11.321       | 11.387     | 17.245        |
+| Haskell  | 2     | 15.640       | 14.958     | 16.742        |
+| Haskell  | 3     | 21.518       | 21.408     | 23.870        |
+| Haskell  | 4     | 27.332       | 30.579     | 39.009        |
+| Elixir   | 2     | 18.901       | 19.479     | 47.024        |
+| Elixir   | 3     | 24.216       | 24.192     | 60.369        |
+| Elixir   | 4     | 29.053       | 29.372     | 69.566        |
+| F#       | 2     | 16.752       | 16.633     | 17.790        |
+| F#       | 3     | 25.353       | 20.207     | 35.072        |
+| F#       | 4     | 32.485       | 33.896     | 31.179        |
+| OCaml    | 2     | 8.285        | 8.443      | 25.897        |
+| OCaml    | 3     | 11.594       | 11.541     | 46.837        |
+| OCaml    | 4     | 15.442       | 15.581     | 65.828        |
+
+### Piper overhead relative to direct Nim
+
+The most important measurement for `piper` is the cost of `:>` compared
+with the equivalent direct call.
+
+| Memory manager | Stage | `:>` overhead | `:>` efficiency |
+| -------------- | ----- | ------------- | --------------- |
+| Nim-ARC        | 2     | -37.30%       | 159.49%         |
+| Nim-ARC        | 3     | +0.59%        | 99.42%          |
+| Nim-ARC        | 4     | +3.76%        | 96.37%          |
+| Nim-ORC        | 2     | +85.66%       | 53.86%          |
+| Nim-ORC        | 3     | -0.72%        | 100.72%         |
+| Nim-ORC        | 4     | +0.59%        | 99.42%          |
+
+The 2-stage ARC/ORC results vary substantially between runs and should
+not be treated as evidence that `:>` intrinsically makes a pipeline
+faster or slower than direct calls. The 3-stage and 4-stage results are
+much more stable indicators: in this snapshot, `:>` remains within
+approximately four percent of direct execution.
+
+This is consistent with `:>` being a compile-time template that expands
+to direct application rather than introducing a runtime pipeline
+object.
+
+### Composition
+
+`>>>` is different from `:>`. `>>>` creates a reusable function value,
+so it necessarily represents a different execution model from direct
+application.
+
+In this benchmark, Nim's `>>>` measured:
+
+| Memory manager | 2-stage      | 3-stage      | 4-stage      |
+| -------------- | ------------ | ------------ | ------------ |
+| ARC            | 12.128 ns/op | 15.032 ns/op | 17.725 ns/op |
+| ORC            | 11.932 ns/op | 14.880 ns/op | 17.245 ns/op |
+
+That is measurably more expensive than direct application, but the
+absolute cost remains small for these pipelines.
+
+The corresponding composition measurements in this benchmark were:
+
+| Language | 2-stage | 3-stage | 4-stage |
+| -------- | ------- | ------- | ------- |
+| Nim-ARC  | 12.128  | 15.032  | 17.725  |
+| Nim-ORC  | 11.932  | 14.880  | 17.245  |
+| Haskell  | 16.742  | 23.870  | 39.009  |
+| Elixir   | 47.024  | 60.369  | 69.566  |
+| F#       | 17.790  | 35.072  | 31.179  |
+| OCaml    | 25.897  | 46.837  | 65.828  |
+
+These figures describe this particular implementation and workload.
+They should not be interpreted as a general ranking of the languages.
+
+### What the benchmark demonstrates
+
+The benchmark is intended to answer a narrow question:
+
+> Does adding `piper`'s syntax introduce significant runtime overhead?
+
+For `:>`, the measured answer in the 3-stage and 4-stage cases is
+effectively **no**: the operator remains close to the direct-call
+baseline under both Nim ARC and ORC.
+
+`>>>` has a measurable cost because it represents reusable,
+first-class function composition rather than compile-time direct
+application. That cost is still small in absolute terms for the
+benchmark's tiny integer pipelines.
+
+The result should therefore be read as:
+
+```text
+direct call
+    ↓
+:> pipe
+    ≈ direct-call cost
+
+>>> composition
+    ↓
+first-class composed function
+    ≈ measurable but small additional cost
+```
+
+### Benchmark limitations
+
+This is a microbenchmark, not a general application-performance
+benchmark.
+
+Microbenchmarks can be unreliable because they test a specific case
+with a specific implementation, workload, toolchain, and environment.
+Results can vary between machines and even between runs, so the numbers
+should be taken with a grain of salt.
+
+It measures very small integer transformations and is particularly
+sensitive to compiler optimization, runtime implementation, CPU
+frequency, cache state, JIT warmup, garbage-collection/runtime
+behavior, and benchmark noise.
+
+The benchmark should therefore be used to evaluate the implementation
+strategy of `piper` rather than to make broad claims about overall
+language performance.
+
+I am not a developer who regularly codes in anything other than Nim,
+Python, and sometimes JavaScript and C, so you are welcome to improve
+the benchmark implementations and verify whether the benchmark is
+correct. If your implementation is faster and remains methodologically
+fair, I will gladly include it in the benchmarks.
 
 ---
 
@@ -941,8 +1121,8 @@ pipelines, you'd need an async-aware operator.
 
 **Q: Does `:>` work with varargs or method call syntax?**
 
-Only with functions that take a single argument. `:>` is designed
-for single-argument transformations.
+Only with functions that take a single argument. `:>` is designed for
+single-argument transformations.
 
 **Q: Is `Fn[A, B]` different from `proc(a: A): B {.closure.}`?**
 
@@ -993,19 +1173,19 @@ nimble test
 
 ### Guidelines
 
-- Add tests for any new behavior.
-- Keep the public API surface small.
-- Prefer clarity over cleverness.
-- Update the README if you change the API.
+* Add tests for any new behavior.
+* Keep the public API surface small.
+* Prefer clarity over cleverness.
+* Update the README if you change the API.
 
 ### Reporting bugs
 
 Include:
 
-- Nim version (`nim --version`)
-- The exact code that fails
-- The full error message
-- Expected vs actual behavior
+* Nim version (`nim --version`)
+* The exact code that fails
+* The full error message
+* Expected vs. actual behavior
 
 ---
 
@@ -1013,18 +1193,18 @@ Include:
 
 `piper` follows [semantic versioning](https://semver.org/):
 
-- **Major** — breaking API changes
-- **Minor** — new features, backward compatible
-- **Patch** — bug fixes, backward compatible
+* **Major** — breaking API changes
+* **Minor** — new features, backward compatible
+* **Patch** — bug fixes, backward compatible
 
 ### Changelog
 
 **0.1.0** — Initial release
 
-- `:>` pipe operator
-- `>>>` composition operator
-- `Fn[A, B]` type alias
-- Tests for both operators and their mixing
+* `:>` pipe operator
+* `>>>` composition operator
+* `Fn[A, B]` type alias
+* Tests for both operators and their mixing
 
 ---
 
@@ -1036,11 +1216,11 @@ BSD-3-Clause. See [LICENSE](LICENSE) for details.
 
 ## See also
 
-- [Nim manual — operators](https://nim-lang.org/docs/manual.html#syntax-operators)
-- [Nim manual — templates](https://nim-lang.org/docs/manual.html#templates)
-- [Elixir pipe operator](<https://hexdocs.pm/elixir/Kernel.html#%7C%3E/2>)
-- [F# pipe and composition](https://learn.microsoft.com/en-us/dotnet/fsharp/language-reference/symbol-and-operator-reference/)
-- [Haskell Control.Category](https://hackage.haskell.org/package/base/docs/Control-Category.html)
+* [Nim manual — operators](https://nim-lang.org/docs/manual.html#syntax-operators)
+* [Nim manual — templates](https://nim-lang.org/docs/manual.html#templates)
+* [Elixir pipe operator](https://hexdocs.pm/elixir/Kernel.html#%7C%3E/2)
+* [F# pipe and composition](https://learn.microsoft.com/en-us/dotnet/fsharp/language-reference/symbol-and-operator-reference/)
+* [Haskell Control.Category](https://hackage.haskell.org/package/base/docs/Control-Category.html)
 
 ---
 
